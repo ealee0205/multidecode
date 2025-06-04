@@ -1,6 +1,12 @@
 # Efficient MultiDecoding with Hugging Face Transformers
 
-This repository explores how to use an optimized decoding algorithm for text generation with Hugging Face Transformers. We call this algorithm 'MultiDecode'. It leverages the `position_ids` and `attention_mask` arguments to the transformer's forward method to simultaneously and efficiently generate the next token for multiple independent sequences from a single shared KV cache.
+This repository shares how to unlock the existing parallel decoding ability of autoregressive large language models (LLMs).
+We call this algorithm "MultiDecode".
+Without any modification to the architecture, training, or hardware of the LLM, use cases involving multiple content blocks (such as RAG)
+or multiple completion paths (such as beam search) can achieve almost linear speedup.
+MultiDecode leverages custom RoPE position values and custom attention masks 
+to simultaneously and efficiently generate exact next token predictions for multiple independent token positions, using a single, shared KV cache.
+Support for these custom position and mask arguments already exists in many libraries, including the Hugging Face Transformers library.
 
 ## Introduction
 
