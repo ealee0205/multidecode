@@ -53,10 +53,11 @@ In order to input a forest of tokens into an LLM, the nodes (tokens) must be arr
 An intuitive requirement is that tokens earlier in the causal chain for one or more other tokens 
 should be placed physically earlier than the tokens with causal dependence on them.
 Either a depth-first search or a breadth-first search (or a mix of them) of the forest is sufficient to meet this causal requirement.
-We must assign custom rope embeddings to each node to match their height in their tree (instead of their physical position in the input),
-and we must assign a custom mask so that each node can only attend to their ancestors.
+We must assign custom RoPE embeddings to each node to match its height in its tree (instead of its physical position in the input),
+and we must assign a custom mask so that each node can only attend to itself and its ancestors.
 Given this configuration, we can read next token predictions from all of the leaves in parallel, 
 and they will be the exact same calculation as if we had input each root-to-leaf sequence separately.
+This is MultiDecoding.
 
 ## Beam search and other use cases
 
