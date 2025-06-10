@@ -9,7 +9,22 @@ to simultaneously and efficiently generate exact next token predictions for mult
 Support for these custom position and mask arguments already exists in many libraries, including the Hugging Face Transformers library.
 
 This repo contains explanations, examples, and sample code showing how to use the MultiDecode paradigm for different use cases. 
-A [YouTube video explanation of MultiDecode](https://youtu.be/9ld43ZYKzeI) is also available.
+A [YouTube video explanation of MultiDecode](https://youtu.be/9ld43ZYKzeI) is also available: \
+[<img src="assets/images/video1.png?raw=true" width="400">](https://youtu.be/9ld43ZYKzeI)
+
+## Motivating example
+
+Consider a scenario where the manager of the technical support department wants to analyze support call transcripts.
+There are 10,000 transcripts, on average several thousand tokens long.
+The manager finalizes 8 yes/no questions they want an LLM to answer about each call.
+Standard decoding will require 80,000 inference steps.
+The wall clock time of these steps can be reduced by doing inference in batches and storing KV cache prefixes,
+but it will always sum to 80,000 inference steps.
+With MultiDecode, all 8 of these questions can be answered simultaneously for each document, in only 10,000 total inference steps,
+each of which requires approximately the same amount of time as a standard decoding inference step.
+
+This 8x reduction in compute cost and time can be achieved with any model without any changes or fine tuning.
+The methodology for MultiDecode is explained below.
 
 ## Background
 
@@ -22,7 +37,7 @@ so position embeddings and triangular autoregressive masks are used to force it 
 
 The power of self-attention's ability to do parallel computation is commonly leveraged during training,
 where teacher forcing is used for input tokens, and predictions from every token position are all used for loss calculation and learning.
-During decoding, however, the common practice is to decode one token ata a time,
+During decoding, however, the common practice is to decode one token at a a time,
 using only the prediction from the last token position.
 The parallel nature of self-attention has been largely ignored for the inference task.
 With MultiDecode, we look to open thinking to all of the parallel possibilities during decoding.
@@ -30,7 +45,7 @@ With MultiDecode, we look to open thinking to all of the parallel possibilities 
 ## MultiDecode
 
 The key insight of this work is that if we think of tokens being nodes in a graph with edges between adjacent tokens,
-then linear sequences are not the only graph that meet the autoregressive formulation requirements.
+then linear sequences are not the only kind of graph that meets the autoregressive formulation requirements.
 Below we show a linear sequence of tokens with whole number RoPE values 0 through 5. \
 <img src="assets/images/sequence.png?raw=true" width="400">
 
