@@ -1,1 +1,9 @@
+# Ignore TODO list
 TODO.md
+
+# Ignore venv
+venv/
+.venv/
+
+# Ignore environment variables file
+.env
