@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from functools import partial
 import pandas as pd
 import matplotlib.pyplot as plt
-import llm_helpers
+import multidecode.llm_helpers as llm_helpers
 
 class MultiDecodeLLM:
     """Helper class that prepares parameters and does text generation with an arbitrary LLM."""
@@ -56,10 +56,12 @@ class MultiDecodeLLM:
         pkv = None
         position_ids = torch.full((batchsize, n_branch), fill_value=context_len + 1, dtype=torch.int).to(self.llm.device)
 
-        if isinstance(self.llm, AutoModelForCausalLM) and self.llm.config.model_type != "meta-llama/Llama-3.2-1B":
+        # Check if it's a LLaMA-family model
+        if hasattr(self.llm.config, "model_type") and "llama" in self.llm.config.model_type.lower():
             self.model_route = 'llama'
         else:
-            raise ValueError('Model type not supported yet')
+            raise ValueError(f'Model type "{self.llm.config.model_type}" not supported yet')
+
 
         if self.model_route == 'llama':
             # Call helper function to create position IDs and full mask
