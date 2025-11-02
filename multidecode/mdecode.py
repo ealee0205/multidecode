@@ -26,6 +26,15 @@ class MultiDecodeLLM:
 
     # TO DO: Helper functions to create masks and position ID lists for different use cases
 
+    # Case 1: one prompt, n runs
+    # TODO: set tokens_to_add to -1 to generate until EOS
+    def setup_one_prompt_n_runs(self, prompt: str, n_branch=1, tokens_to_add=10):
+        ...
+
+    # Case 2: multi prompt, one run
+    def setup_multi_prompt_one_run(self, prompts: list, tokens_to_add=10):
+        ...
+
     def generate(self, prompt: str, n_branch=1, tokens_to_add=10, steer=None):
         """
         An optimized multi decoding algorithm for text generation.
