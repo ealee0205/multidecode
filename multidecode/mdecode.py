@@ -49,8 +49,29 @@ class MultiDecodeLLM:
         
 
     # Case 2: multi prompt, one run
-    def setup_multi_prompt_one_run(self, prompts: list, tokens_to_add=10):
-        ...
+    def setup_multi_prompt_one_run(self, prompts: list, context=None, verbose=False):
+        context_ids = self.tokenizer(context, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device) if context is not None else None
+        input_ids = []
+        question_lens = []
+        for prompt in prompts:
+            encoded_prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
+            input_ids.append(encoded_prompt)
+            question_lens.append(encoded_prompt.shape[1])
+        input_ids = torch.cat(input_ids, dim=-1)
+        if context_ids is not None:
+            input_ids = torch.cat([context_ids, input_ids], dim=-1)
+        context_len = context_ids.shape[1]
+        total_question_len = sum(question_lens)
+
+        mask = self.lut_attn(input_ids.shape[1])
+        mask[:, :, context_len:total_question_len + context_len, context_len:total_question_len + context_len] = float('-inf')
+
+
+        positions = torch.cat([torch.arange(context_len + q_len) for q_len in question_lens]).unsqueeze(0)
+        branch_locations = [context_len + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens) + 1)]
+        if verbose:
+            print_args(input_ids, mask=mask, positions=positions, branch_locations=branch_locations)
+        return mask, positions, branch_locations
 
     def generate(self, model, input_ids,positions=None,mask=None,gen_len=10,n_branch=2,greedy=False,branch_locations=None,past_key_values=None):
         """
