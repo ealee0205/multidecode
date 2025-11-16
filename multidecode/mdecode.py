@@ -9,7 +9,7 @@ from functools import partial
 import pandas as pd
 import matplotlib.pyplot as plt
 import multidecode.llm_helpers as llm_helpers
-from multidecode.visualization_helpers import print_args, print_results, print_mask, print_full
+from multidecode.visualization_helpers import print_args, print_mask, print_full
 
 class MultiDecodeLLM:
     """Helper class that prepares parameters and does text generation with an arbitrary LLM."""
@@ -72,6 +72,54 @@ class MultiDecodeLLM:
         if verbose:
             print_args(input_ids, mask=mask, positions=positions, branch_locations=branch_locations)
         return mask, positions, branch_locations
+    
+    # Case 3: Writing in the margins
+    def setup_writing_in_margins(self, context: str, prompt: str, delimiter: str, verbose=False):
+        subcontexts = context.split(delimiter)
+        input_ids = []
+        masks = []
+        positions = []
+
+        for subcontext in subcontexts:
+            subcontext_ids = self.tokenizer(subcontext, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
+            prompt_ids = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
+            combined_ids = torch.cat([subcontext_ids, prompt_ids], dim=-1)
+            batch_size, ctx_len = combined_ids.shape
+            total_len = ctx_len
+
+            mask = self.lut_attn(total_len)
+            mask[:, :, :ctx_len, :ctx_len] = float(0.0)
+
+            position = torch.arange(total_len).unsqueeze(0).to(self.model.device)
+
+            input_ids.append(combined_ids)
+            masks.append(mask)
+            positions.append(position)
+
+        # Combine input_ids, masks, and positions
+        input_ids = torch.cat(input_ids, dim=-1)
+        masks = torch.cat(masks, dim=-1)
+        positions = torch.cat(positions, dim=-1)
+
+        # Create combined mask to hide questions from each other's context
+        context_lens = [ids.shape[1] for ids in input_ids.split(prompt_ids.shape[1], dim=-1)]
+        question_lens = [prompt_ids.shape[1]] * len(subcontexts)
+
+        total_context_len = sum(context_lens)
+        for i in range(len(subcontexts)):
+            start_i = sum(context_lens[:i]) + sum(question_lens[:i])
+            end_i = start_i + question_lens[i]
+            masks[:, :, start_i:end_i, :total_context_len] = float('-inf')
+            masks[:, :, :total_context_len, start_i:end_i] = float('-inf')
+
+        branch_locations = [sum(context_lens) + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens) + 1)]
+
+        if verbose:
+            print_args(input_ids, masks, positions)
+
+        return masks, positions, branch_locations
+
+    # Case 4: Beam search
 
     def generate(self, model, input_ids,positions=None,mask=None,gen_len=10,n_branch=2,greedy=False,branch_locations=None,past_key_values=None):
         """
@@ -199,6 +247,54 @@ class MultiDecodeLLM:
         return {'branch_ids':branch_ids,'mask':mask,'output_ids':output_ids,'input_ids':full_ids,
                 'n_branch':n_branch,'initial_length':initial_length,'positions':position_history,'past_key_values':pkv}
     
+    def select_branch(self, output, selected_branch):
+        """
+        Selects a specific branch from the output of the `mdgen` function.
+
+        This function extracts the input IDs, position IDs, attention mask, and past key values
+        corresponding to the specified branch index from the output of the `mdgen` function.
+
+        Args:
+            output (dict): The output dictionary from the `mdgen` function. It should contain:
+                - 'branch_ids' (torch.Tensor): Generated token IDs for each branch.
+                - 'positions' (torch.Tensor): Position encodings for each branch.
+                - 'mask' (torch.Tensor): Attention mask for each branch.
+                - 'past_key_values' (optional): Cached key-value pairs for efficient decoding.
+            branch_index (int): The index of the branch to select.
+
+        Returns:
+            tuple: A tuple containing:
+                - input2_ids (torch.Tensor): The token IDs for the selected branch.
+                - position2_ids (torch.Tensor): The position encodings for the selected branch.
+                - mask2 (torch.Tensor): The attention mask for the selected branch.
+                - pkv (optional): The past key-value pairs for the selected branch, if available.
+
+        Raises:
+            IndexError: If the specified branch index is out of range.
+
+        Example:
+            input2_ids, position2_ids, mask2, pkv = select_branch(output, branch_index=1)
+        """
+        pkv=output['past_key_values']
+        o_positions=output['positions']
+        o_mask=output['mask']
+        o_input_ids=output['input_ids']
+        o_initial_len=output['initial_length']
+        o_input_ids_len=o_input_ids.shape[1]
+
+        input_indexes=torch.cat([torch.arange(o_initial_len),torch.arange(o_initial_len+selected_branch,o_input_ids_len+1,n_branch,dtype=torch.int)],dim=-1)
+
+        input2_ids=o_input_ids[:,input_indexes]
+        position2_ids=o_positions[:,input_indexes]
+        selected_len=(o_input_ids.shape[1]- o_initial_len)//n_branch
+        mask2=o_mask[:,:,selected_branch,input_indexes[:o_initial_len]].repeat([1,1,selected_len,1])
+        mask2=torch.cat([mask2,lut_attn(selected_len).to(model.device)],dim=-1)
+
+        pkv.crop(o_initial_len)
+
+        print(f"{input2_ids.shape=} {position2_ids.shape=} {mask2.shape=} {pkv.get_seq_length()=}")
+        return input2_ids,position2_ids, mask2, pkv
+    
     def print_results(self, output):
         print()
         print("Results")
@@ -206,7 +302,7 @@ class MultiDecodeLLM:
         print(f"{''.join(self.tokenizer.batch_decode(output['output_ids'], skip_special_tokens=True))}")
         print()
         print("Reformated")
-        print_full(output)
+        print_full(output, self.tokenizer)
         print()
         print(f"positions {output['positions']}")
         print()
