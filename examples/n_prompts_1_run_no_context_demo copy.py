@@ -4,7 +4,7 @@ from multidecode.mdecode import MultiDecodeLLM
 import torch
 
 # Load the model and tokenizer
-model_name="meta-llama/Llama-3.2-1B"
+model_name = "meta-llama/Llama-3.2-1B"
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
 model = AutoModelForCausalLM.from_pretrained(model_name)
 if torch.backends.mps.is_available():
@@ -14,12 +14,12 @@ model = model.to("mps" if torch.backends.mps.is_available() else "cpu")
 # Initialize the MultiDecodeLLM class
 mdllm = MultiDecodeLLM(model=model, tokenizer=tokenizer)
 
-# Define a prompt
-prompt = "Once upon a time"
+# Define prompts
+prompts = ["Once upon a time", "In a galaxy far, far away"]
 
 # Measure setup time
 start_setup_time = time.time()
-mask = mdllm.setup_one_prompt_n_runs(prompt, verbose=True)
+mask, positions, branch_locations = mdllm.setup_multi_prompt_one_run(prompts, verbose=True)
 end_setup_time = time.time()
 print(f"Setup time: {end_setup_time - start_setup_time:.2f} seconds")
 
@@ -27,7 +27,7 @@ print(f"Setup time: {end_setup_time - start_setup_time:.2f} seconds")
 start_gen_time = time.time()
 output = mdllm.generate(
     model=model,
-    input_ids=tokenizer(prompt, return_tensors="pt")['input_ids'].to(model.device),
+    input_ids=torch.cat([tokenizer(prompt, return_tensors="pt")['input_ids'].to(model.device) for prompt in prompts], dim=-1),
     mask=mask,
     gen_len=10,
     n_branch=5,
