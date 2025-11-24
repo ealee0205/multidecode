@@ -19,7 +19,15 @@ class MultiDecodeLLM:
         llm: an instance of the model or client (e.g., Hugging Face model)
         tokenizer: optional tokenizer if the backend requires one
         """
-        self.model = model.to("cuda" if torch.cuda.is_available() else "cpu") # Use GPU if available
+        if torch.cuda.is_available():
+            print("Using CUDA backend")
+            self.model = model.to("cuda")
+        elif torch.backends.mps.is_available():
+            print("Using MPS backend")
+            self.model = model.to("mps")
+        else:
+            print("Using CPU backend")
+            self.model = model.to("cpu")
 
         self.model_route = None
         self.tokenizer = tokenizer
@@ -51,27 +59,36 @@ class MultiDecodeLLM:
     # Case 2: multi prompt, one run
     def setup_multi_prompt_one_run(self, prompts: list, context=None, verbose=False):
         context_ids = self.tokenizer(context, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device) if context is not None else None
+        context_len = context_ids.shape[1] if context_ids is not None else 0
+        print(f"DEBUG: {context_ids.shape=}" if context_ids is not None else "No context")
         input_ids = []
         question_lens = []
         for prompt in prompts:
             encoded_prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
             input_ids.append(encoded_prompt)
+            print(f"DEBUG: Encoded prompt: {prompt}, length: {encoded_prompt.shape=}")
             question_lens.append(encoded_prompt.shape[1])
         input_ids = torch.cat(input_ids, dim=-1)
         if context_ids is not None:
             input_ids = torch.cat([context_ids, input_ids], dim=-1)
-        context_len = context_ids.shape[1]
         total_question_len = sum(question_lens)
+        print(f"DEBUG: Total input_ids length: {input_ids.shape[1]}")
 
         mask = self.lut_attn(input_ids.shape[1])
-        mask[:, :, context_len:total_question_len + context_len, context_len:total_question_len + context_len] = float('-inf')
+        for prompt_idx in range(len(prompts)):
+            start_q = context_len + sum(question_lens[:prompt_idx])
+            end_q = start_q + question_lens[prompt_idx]
+            # Block attention from this question to other questions
+            mask[:, :, start_q:end_q, context_len:start_q] = float('-inf')
 
-
-        positions = torch.cat([torch.arange(context_len + q_len) for q_len in question_lens]).unsqueeze(0)
-        branch_locations = [context_len + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens) + 1)]
+        ctx_positions = torch.arange(context_len)
+        prpt_positions = torch.cat([torch.arange(context_len, context_len + q_len) for q_len in question_lens])
+        positions = torch.cat([ctx_positions, prpt_positions]).unsqueeze(0).to(self.model.device)
+        branch_locations = [context_len + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens)+1)]
+        print(f"DEBUG: branch_locations: {branch_locations}")
         if verbose:
             print_args(input_ids, mask=mask, positions=positions, branch_locations=branch_locations)
-        return mask, positions, branch_locations
+        return mask, positions, branch_locations, input_ids
     
     # Case 3: Writing in the margins
     def setup_writing_in_margins(self, context: str, prompt: str, delimiter: str, verbose=False):
@@ -247,53 +264,53 @@ class MultiDecodeLLM:
         return {'branch_ids':branch_ids,'mask':mask,'output_ids':output_ids,'input_ids':full_ids,
                 'n_branch':n_branch,'initial_length':initial_length,'positions':position_history,'past_key_values':pkv}
     
-    def select_branch(self, output, selected_branch):
-        """
-        Selects a specific branch from the output of the `mdgen` function.
+    # def select_branch(self, output, selected_branch):
+    #     """
+    #     Selects a specific branch from the output of the `mdgen` function.
 
-        This function extracts the input IDs, position IDs, attention mask, and past key values
-        corresponding to the specified branch index from the output of the `mdgen` function.
+    #     This function extracts the input IDs, position IDs, attention mask, and past key values
+    #     corresponding to the specified branch index from the output of the `mdgen` function.
 
-        Args:
-            output (dict): The output dictionary from the `mdgen` function. It should contain:
-                - 'branch_ids' (torch.Tensor): Generated token IDs for each branch.
-                - 'positions' (torch.Tensor): Position encodings for each branch.
-                - 'mask' (torch.Tensor): Attention mask for each branch.
-                - 'past_key_values' (optional): Cached key-value pairs for efficient decoding.
-            branch_index (int): The index of the branch to select.
+    #     Args:
+    #         output (dict): The output dictionary from the `mdgen` function. It should contain:
+    #             - 'branch_ids' (torch.Tensor): Generated token IDs for each branch.
+    #             - 'positions' (torch.Tensor): Position encodings for each branch.
+    #             - 'mask' (torch.Tensor): Attention mask for each branch.
+    #             - 'past_key_values' (optional): Cached key-value pairs for efficient decoding.
+    #         branch_index (int): The index of the branch to select.
 
-        Returns:
-            tuple: A tuple containing:
-                - input2_ids (torch.Tensor): The token IDs for the selected branch.
-                - position2_ids (torch.Tensor): The position encodings for the selected branch.
-                - mask2 (torch.Tensor): The attention mask for the selected branch.
-                - pkv (optional): The past key-value pairs for the selected branch, if available.
+    #     Returns:
+    #         tuple: A tuple containing:
+    #             - input2_ids (torch.Tensor): The token IDs for the selected branch.
+    #             - position2_ids (torch.Tensor): The position encodings for the selected branch.
+    #             - mask2 (torch.Tensor): The attention mask for the selected branch.
+    #             - pkv (optional): The past key-value pairs for the selected branch, if available.
 
-        Raises:
-            IndexError: If the specified branch index is out of range.
+    #     Raises:
+    #         IndexError: If the specified branch index is out of range.
 
-        Example:
-            input2_ids, position2_ids, mask2, pkv = select_branch(output, branch_index=1)
-        """
-        pkv=output['past_key_values']
-        o_positions=output['positions']
-        o_mask=output['mask']
-        o_input_ids=output['input_ids']
-        o_initial_len=output['initial_length']
-        o_input_ids_len=o_input_ids.shape[1]
+    #     Example:
+    #         input2_ids, position2_ids, mask2, pkv = select_branch(output, branch_index=1)
+    #     """
+    #     pkv=output['past_key_values']
+    #     o_positions=output['positions']
+    #     o_mask=output['mask']
+    #     o_input_ids=output['input_ids']
+    #     o_initial_len=output['initial_length']
+    #     o_input_ids_len=o_input_ids.shape[1]
 
-        input_indexes=torch.cat([torch.arange(o_initial_len),torch.arange(o_initial_len+selected_branch,o_input_ids_len+1,n_branch,dtype=torch.int)],dim=-1)
+    #     input_indexes=torch.cat([torch.arange(o_initial_len),torch.arange(o_initial_len+selected_branch,o_input_ids_len+1,n_branch,dtype=torch.int)],dim=-1)
 
-        input2_ids=o_input_ids[:,input_indexes]
-        position2_ids=o_positions[:,input_indexes]
-        selected_len=(o_input_ids.shape[1]- o_initial_len)//n_branch
-        mask2=o_mask[:,:,selected_branch,input_indexes[:o_initial_len]].repeat([1,1,selected_len,1])
-        mask2=torch.cat([mask2,lut_attn(selected_len).to(model.device)],dim=-1)
+    #     input2_ids=o_input_ids[:,input_indexes]
+    #     position2_ids=o_positions[:,input_indexes]
+    #     selected_len=(o_input_ids.shape[1]- o_initial_len)//n_branch
+    #     mask2=o_mask[:,:,selected_branch,input_indexes[:o_initial_len]].repeat([1,1,selected_len,1])
+    #     mask2=torch.cat([mask2,self.lut_attn(selected_len).to(self.model.device)],dim=-1)
 
-        pkv.crop(o_initial_len)
+    #     pkv.crop(o_initial_len)
 
-        print(f"{input2_ids.shape=} {position2_ids.shape=} {mask2.shape=} {pkv.get_seq_length()=}")
-        return input2_ids,position2_ids, mask2, pkv
+    #     print(f"{input2_ids.shape=} {position2_ids.shape=} {mask2.shape=} {pkv.get_seq_length()=}")
+    #     return input2_ids,position2_ids, mask2, pkv
     
     def print_results(self, output):
         print()

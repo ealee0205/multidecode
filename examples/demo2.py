@@ -19,7 +19,7 @@ prompts = ["Once upon a time", "In a galaxy far, far away"]
 
 # Measure setup time
 start_setup_time = time.time()
-mask, positions, branch_locations = mdllm.setup_multi_prompt_one_run(prompts, verbose=True)
+mask, positions, branch_locations, input_ids = mdllm.setup_multi_prompt_one_run(prompts, verbose=True)
 end_setup_time = time.time()
 print(f"Setup time: {end_setup_time - start_setup_time:.2f} seconds")
 
@@ -30,7 +30,6 @@ output = mdllm.generate(
     input_ids=torch.cat([tokenizer(prompt, return_tensors="pt")['input_ids'].to(model.device) for prompt in prompts], dim=-1),
     mask=mask,
     gen_len=10,
-    n_branch=5,
     greedy=False
 )
 end_gen_time = time.time()
