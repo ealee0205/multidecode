@@ -60,19 +60,16 @@ class MultiDecodeLLM:
     def setup_multi_prompt_one_run(self, prompts: list, context=None, verbose=False):
         context_ids = self.tokenizer(context, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device) if context is not None else None
         context_len = context_ids.shape[1] if context_ids is not None else 0
-        print(f"DEBUG: {context_ids.shape=}" if context_ids is not None else "No context")
         input_ids = []
         question_lens = []
         for prompt in prompts:
             encoded_prompt = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
             input_ids.append(encoded_prompt)
-            print(f"DEBUG: Encoded prompt: {prompt}, length: {encoded_prompt.shape=}")
             question_lens.append(encoded_prompt.shape[1])
         input_ids = torch.cat(input_ids, dim=-1)
         if context_ids is not None:
             input_ids = torch.cat([context_ids, input_ids], dim=-1)
         total_question_len = sum(question_lens)
-        print(f"DEBUG: Total input_ids length: {input_ids.shape[1]}")
 
         mask = self.lut_attn(input_ids.shape[1])
         for prompt_idx in range(len(prompts)):
@@ -85,7 +82,6 @@ class MultiDecodeLLM:
         prpt_positions = torch.cat([torch.arange(context_len, context_len + q_len) for q_len in question_lens])
         positions = torch.cat([ctx_positions, prpt_positions]).unsqueeze(0).to(self.model.device)
         branch_locations = [context_len + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens)+1)]
-        print(f"DEBUG: branch_locations: {branch_locations}")
         if verbose:
             print_args(input_ids, mask=mask, positions=positions, branch_locations=branch_locations)
         return mask, positions, branch_locations, input_ids
@@ -93,48 +89,48 @@ class MultiDecodeLLM:
     # Case 3: Writing in the margins
     def setup_writing_in_margins(self, context: str, prompt: str, delimiter: str, verbose=False):
         subcontexts = context.split(delimiter)
-        input_ids = []
-        masks = []
-        positions = []
+        if subcontexts[-1].strip() == "":
+            subcontexts = subcontexts[:-1]
+        input_strings = [subcontext + delimiter + " " + prompt for subcontext in subcontexts]
+        mask, positions, branch_locations, input_ids = self.setup_multi_prompt_one_run(input_strings, verbose=verbose)
+        # for subcontext in subcontexts:
+        #     subcontext_ids = self.tokenizer(subcontext, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
+        #     prompt_ids = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
+        #     combined_ids = torch.cat([subcontext_ids, prompt_ids], dim=-1)
+        #     batch_size, ctx_len = combined_ids.shape
+        #     total_len = ctx_len
 
-        for subcontext in subcontexts:
-            subcontext_ids = self.tokenizer(subcontext, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
-            prompt_ids = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)['input_ids'].to(self.model.device)
-            combined_ids = torch.cat([subcontext_ids, prompt_ids], dim=-1)
-            batch_size, ctx_len = combined_ids.shape
-            total_len = ctx_len
+        #     mask = self.lut_attn(total_len)
+        #     mask[:, :, :ctx_len, :ctx_len] = float(0.0)
 
-            mask = self.lut_attn(total_len)
-            mask[:, :, :ctx_len, :ctx_len] = float(0.0)
+        #     position = torch.arange(total_len).unsqueeze(0).to(self.model.device)
 
-            position = torch.arange(total_len).unsqueeze(0).to(self.model.device)
+        #     input_ids.append(combined_ids)
+        #     masks.append(mask)
+        #     positions.append(position)
 
-            input_ids.append(combined_ids)
-            masks.append(mask)
-            positions.append(position)
+        # # Combine input_ids, masks, and positions
+        # input_ids = torch.cat(input_ids, dim=-1)
+        # masks = torch.cat(masks, dim=-1)
+        # positions = torch.cat(positions, dim=-1)
 
-        # Combine input_ids, masks, and positions
-        input_ids = torch.cat(input_ids, dim=-1)
-        masks = torch.cat(masks, dim=-1)
-        positions = torch.cat(positions, dim=-1)
+        # # Create combined mask to hide questions from each other's context
+        # context_lens = [ids.shape[1] for ids in input_ids.split(prompt_ids.shape[1], dim=-1)]
+        # question_lens = [prompt_ids.shape[1]] * len(subcontexts)
 
-        # Create combined mask to hide questions from each other's context
-        context_lens = [ids.shape[1] for ids in input_ids.split(prompt_ids.shape[1], dim=-1)]
-        question_lens = [prompt_ids.shape[1]] * len(subcontexts)
+        # total_context_len = sum(context_lens)
+        # for i in range(len(subcontexts)):
+        #     start_i = sum(context_lens[:i]) + sum(question_lens[:i])
+        #     end_i = start_i + question_lens[i]
+        #     masks[:, :, start_i:end_i, :total_context_len] = float('-inf')
+        #     masks[:, :, :total_context_len, start_i:end_i] = float('-inf')
 
-        total_context_len = sum(context_lens)
-        for i in range(len(subcontexts)):
-            start_i = sum(context_lens[:i]) + sum(question_lens[:i])
-            end_i = start_i + question_lens[i]
-            masks[:, :, start_i:end_i, :total_context_len] = float('-inf')
-            masks[:, :, :total_context_len, start_i:end_i] = float('-inf')
+        # branch_locations = [sum(context_lens) + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens) + 1)]
 
-        branch_locations = [sum(context_lens) + sum(question_lens[:i]) - 1 for i in range(1, len(question_lens) + 1)]
+        # if verbose:
+        #     print_args(input_ids, masks, positions)
 
-        if verbose:
-            print_args(input_ids, masks, positions)
-
-        return masks, positions, branch_locations
+        return mask, positions, branch_locations, input_ids
 
     # Case 4: Beam search
 

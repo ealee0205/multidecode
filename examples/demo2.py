@@ -1,3 +1,5 @@
+## Example script demonstrating the use of MultiDecodeLLM one run for multiple prompts without shared context
+
 import time
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from multidecode.mdecode import MultiDecodeLLM
@@ -7,9 +9,9 @@ import torch
 model_name = "meta-llama/Llama-3.2-1B"
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
 model = AutoModelForCausalLM.from_pretrained(model_name)
-if torch.backends.mps.is_available():
-    print("Using MPS backend")
-model = model.to("mps" if torch.backends.mps.is_available() else "cpu")
+# if torch.backends.mps.is_available():
+#     print("Using MPS backend")
+# model = model.to("mps" if torch.backends.mps.is_available() else "cpu")
 
 # Initialize the MultiDecodeLLM class
 mdllm = MultiDecodeLLM(model=model, tokenizer=tokenizer)
@@ -27,8 +29,10 @@ print(f"Setup time: {end_setup_time - start_setup_time:.2f} seconds")
 start_gen_time = time.time()
 output = mdllm.generate(
     model=model,
-    input_ids=torch.cat([tokenizer(prompt, return_tensors="pt")['input_ids'].to(model.device) for prompt in prompts], dim=-1),
+    input_ids=input_ids,
+    positions=positions,
     mask=mask,
+    branch_locations=branch_locations,
     gen_len=10,
     greedy=False
 )
