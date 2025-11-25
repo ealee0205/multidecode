@@ -134,7 +134,7 @@ class MultiDecodeLLM:
 
     # Case 4: Beam search
 
-    def generate(self, model, input_ids,positions=None,mask=None,gen_len=10,n_branch=2,greedy=False,branch_locations=None,past_key_values=None):
+    def generate(self, model, input_ids,positions=None,mask=None,gen_len=-1,n_branch=2,greedy=False,branch_locations=None,past_key_values=None):
         """
         Implements the parallel generation of tokens using the multidecode technique.
 
@@ -231,7 +231,22 @@ class MultiDecodeLLM:
             logits=output['logits'][:,branch_locations-past_len,:]
             mask = mask[:,:,branch_locations-past_len,:]
 
-            for i in range(gen_len):
+            # Determine if we need to generate until EOS
+            ## Functionality to generate until EOS token, however current model weights does not trigger an EOS
+            ## Possibly due to incorrect fine-tuning or not being chat format
+            generate_until_eos = (gen_len == -1)
+            if generate_until_eos:
+                max_iterations = 30  # Safety limit to prevent infinite loops
+                branches_complete = torch.zeros(n_branch, dtype=torch.bool).to(model.device)
+            else:
+                max_iterations = gen_len
+            
+            iteration = 0
+            while iteration < max_iterations:
+                # Check if all branches are complete (only if generating until EOS)
+                if generate_until_eos and branches_complete.all():
+                    break
+                
                 # select tokens, greedy or not
                 next_token_probs = F.softmax(logits / 0.7, dim=-1)
                 if greedy:
@@ -239,6 +254,10 @@ class MultiDecodeLLM:
                 else:
                     samples = torch.multinomial(next_token_probs.view(-1,next_token_probs.shape[-1]), num_samples=1, replacement=True).view(batch_size,n_branch)
                     tokens = samples.squeeze(-1)
+
+                # Mark branches as complete if they generated EOS token
+                if generate_until_eos:
+                    branches_complete |= (tokens[0] == self.tokenizer.eos_token_id)
 
                 # save the generated tokens
                 output_ids=torch.cat([output_ids,tokens],dim=-1)
@@ -253,6 +272,9 @@ class MultiDecodeLLM:
                 gen_positions+=1
 
                 position_history=torch.cat([position_history,gen_positions],dim=-1)
+                
+                iteration += 1
+
 
         # restruture the results to have n_branch sequences
         branch_ids=output_ids.view(-1,n_branch,1).permute(2,1,0).squeeze(-1)
