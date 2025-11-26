@@ -9,9 +9,6 @@ import torch
 model_name = "meta-llama/Llama-3.2-1B"
 tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side='left')
 model = AutoModelForCausalLM.from_pretrained(model_name)
-# if torch.backends.mps.is_available():
-#     print("Using MPS backend")
-# model = model.to("mps" if torch.backends.mps.is_available() else "cpu")
 
 # Initialize the MultiDecodeLLM class
 mdllm = MultiDecodeLLM(model=model, tokenizer=tokenizer)

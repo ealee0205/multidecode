@@ -20,6 +20,10 @@ prompt = "Who is the protagonist of the story?"
 
 delimiter = "."
 
+# TODO: Make example much longer
+# TODO: List of subchunks instead of delimiter
+# TODO: Concatenate all answer branches + original user context and prompt
+
 # Measure setup time
 start_setup_time = time.time()
 mask, positions, branch_locations, input_ids = mdllm.setup_writing_in_margins(context, prompt, delimiter, verbose=True)
