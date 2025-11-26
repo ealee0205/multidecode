@@ -53,7 +53,9 @@ class MultiDecodeLLM:
         mask = self.lut_attn(input_ids.shape[1])
         if verbose:
             print_args(input_ids,mask=mask)
-        return mask
+        return mask, input_ids
+    
+    # TODO: Case 1: should still return input_ids for consistency
         
 
     # Case 2: multi prompt, one run

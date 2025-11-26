@@ -1,3 +1,5 @@
+## Example script demonstrating the use of MultiDecodeLLM for one prompt with multiple runs
+
 import time
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from multidecode.mdecode import MultiDecodeLLM
@@ -16,7 +18,7 @@ prompt = "Once upon a time"
 
 # Measure setup time
 start_setup_time = time.time()
-mask = mdllm.setup_one_prompt_n_runs(prompt, verbose=True)
+mask, input_ids = mdllm.setup_one_prompt_n_runs(prompt, verbose=True)
 end_setup_time = time.time()
 print(f"Setup time: {end_setup_time - start_setup_time:.2f} seconds")
 
@@ -24,7 +26,7 @@ print(f"Setup time: {end_setup_time - start_setup_time:.2f} seconds")
 start_gen_time = time.time()
 output = mdllm.generate(
     model=model,
-    input_ids=tokenizer(prompt, return_tensors="pt")['input_ids'].to(model.device),
+    input_ids=input_ids,
     mask=mask,
     gen_len=10,
     n_branch=5,
